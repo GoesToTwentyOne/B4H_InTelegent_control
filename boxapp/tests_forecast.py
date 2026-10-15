@@ -20,7 +20,11 @@ FACE = "face_comparison_successful"
 H = timedelta(hours=1)
 
 _tmp = tempfile.TemporaryDirectory()
+<<<<<<< HEAD
 _override = override_settings(FORECAST_MODEL_PATH=Path(_tmp.name) / "forecast_model.pkl")   # never touch the real file
+=======
+_override = override_settings(FORECAST_MODEL_PATH=Path(_tmp.name) / "forecast_model.joblib")   # never touch the real file
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570
 
 
 def setUpModule():
@@ -266,6 +270,7 @@ class PageTest(TestCase):
         self.assertContains(r, "1 to investigate")
         self.assertContains(r, "Past forecasts vs what happened")
 
+<<<<<<< HEAD
     def test_camera_without_events_is_listed_with_a_reason(self):
         with patch("boxapp.services.device_names", return_value={"1": "Camera 01", "3": "Camera 03"}):
             r = self.client.get("/admin/boxapp/eventforecastpage/")
@@ -273,6 +278,8 @@ class PageTest(TestCase):
         self.assertContains(r, "Camera 03")
         self.assertContains(r, "No events recorded for this camera yet")
 
+=======
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570
     def test_json_endpoint(self):
         body = self.client.get("/admin/forecast/data/").json()
         self.assertEqual(body["forecasts"][0]["next_hour_event_count"], 25)
@@ -288,6 +295,7 @@ class PageTest(TestCase):
         self.client.force_login(get_user_model().objects.create_user("g", password="pw12345!", is_staff=True))
         self.assertEqual(self.client.post("/admin/forecast/run/").status_code, 403)
         self.assertEqual(self.client.get("/admin/forecast/data/").status_code, 403)
+<<<<<<< HEAD
 
 
 class MissingSklearnTest(TestCase):
@@ -305,3 +313,5 @@ class MissingSklearnTest(TestCase):
             bundle = forecast.train(forecast.load_series(), end)
         self.assertFalse(bundle["use_model"])
         self.assertIn("scikit-learn", bundle["metrics"]["note"])
+=======
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570

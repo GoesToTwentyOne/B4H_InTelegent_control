@@ -54,6 +54,7 @@
   {% endfor %}
   </tbody>
 </table>
+<<<<<<< HEAD
 {% if without_forecast %}
 <h3 style="margin-top:18px;">Cameras without a forecast</h3>
 <table class="box-table">
@@ -61,6 +62,8 @@
   <tbody>{% for c in without_forecast %}<tr><td>{{ c.name }} <span class="box-muted">#{{ c.id }}</span></td><td class="fc-note">{{ c.reason }}</td></tr>{% endfor %}</tbody>
 </table>
 {% endif %}
+=======
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570
 {% else %}
 <p class="box-empty box-muted">
   No forecast yet. The agent needs historical events with timestamps from the box (at least a day per camera, ideally

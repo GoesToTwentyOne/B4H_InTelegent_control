@@ -131,4 +131,8 @@ FORECAST_RUN_MINUTE = int(os.getenv("FORECAST_RUN_MINUTE", "2"))    # run this m
 FORECAST_Z = float(os.getenv("FORECAST_Z", "2.0"))
 FORECAST_RATIO = float(os.getenv("FORECAST_RATIO", "1.5"))
 FORECAST_MIN_DELTA = float(os.getenv("FORECAST_MIN_DELTA", "5"))
+<<<<<<< HEAD
 FORECAST_MODEL_PATH = BASE_DIR / "forecast_model.pkl"
+=======
+FORECAST_MODEL_PATH = BASE_DIR / "forecast_model.joblib"
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570

@@ -33,7 +33,10 @@ from __future__ import annotations
 
 import logging
 import math
+<<<<<<< HEAD
 import pickle
+=======
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570
 import threading
 import time
 from collections import Counter, defaultdict
@@ -341,6 +344,11 @@ def train(series: dict, end_utc: datetime) -> dict:
     Fit and validate. Returns {model, use_model, metrics}. `model` is None (and the forecast is the seasonal
     average) when there is too little data or no model beats the average on unseen hours.
     """
+<<<<<<< HEAD
+=======
+    import joblib
+
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570
     rows = build_rows(series, end_utc)
     metrics: dict = {"rows": len(rows), "series": len(series), "trained_at": timezone.now().isoformat(timespec="seconds"),
                      "used": "baseline"}
@@ -368,9 +376,12 @@ def train(series: dict, end_utc: datetime) -> dict:
             mae[cls.name] = float(np.abs(cls().fit(train_rows).predict(xs) - actual).mean())
         except Exception as e:      # a candidate failing must not stop the others
             log.warning("Forecast candidate %s failed: %r", cls.name, e)
+<<<<<<< HEAD
     if len(mae) == 1:        # every model candidate failed (typically: scikit-learn is not installed)
         metrics["note"] = "No model could be trained (is scikit-learn installed? pip install -r requirements.txt): using the seasonal average."
         return bundle
+=======
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570
     best = min(mae, key=mae.get)
     metrics.update(holdout_hours=hold_hours, holdout_rows=len(test_rows),
                    mae={k: round(v, 3) for k, v in mae.items()}, mae_baseline=round(mae["baseline"], 3))
@@ -383,9 +394,14 @@ def train(series: dict, end_utc: datetime) -> dict:
     bundle["model"] = {"gbm": _GbmModel, "glm": _GlmModel}[best]().fit(rows)      # refit on everything, newest hours included
     bundle["use_model"] = True
     try:
+<<<<<<< HEAD
         with open(settings.FORECAST_MODEL_PATH, "wb") as fh:
             pickle.dump({"model": bundle["model"], "metrics": metrics}, fh)
     except (OSError, pickle.PickleError) as e:
+=======
+        joblib.dump({"model": bundle["model"], "metrics": metrics}, settings.FORECAST_MODEL_PATH)
+    except OSError as e:
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570
         log.warning("Could not save the model file: %s", e)
     return bundle
 

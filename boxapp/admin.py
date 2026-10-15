@@ -162,6 +162,7 @@ class EventForecastAdmin(BoxPageAdmin):
         def row(f):
             return {"f": f, "device": names.get(str(f.device_id), f"Camera {f.device_id}"), "label": forecast.label(f.event_type)}
 
+<<<<<<< HEAD
         # Cameras the box lists but that have no forecast: say why instead of silently leaving them out.
         with_forecast = {f.device_id for f in current}
         without = []
@@ -179,6 +180,10 @@ class EventForecastAdmin(BoxPageAdmin):
         agent = ForecastState.objects.filter(key="agent").first()
         return {
             "without_forecast": without if latest else [],
+=======
+        agent = ForecastState.objects.filter(key="agent").first()
+        return {
+>>>>>>> fe6c3d54a78eb17946e8cbe14d946fe2085e6570
             "latest_hour": latest,
             "forecasts": [row(f) for f in current],
             "recent": [row(f) for f in recent],
