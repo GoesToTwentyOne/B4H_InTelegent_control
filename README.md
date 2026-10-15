@@ -369,4 +369,9 @@ with a few days the plain average usually wins. Setup: `pip install -r requireme
 - Alarm workers are started when a rule is created or toggled. `MovementAlarmManager.sync()` exists but is not called at startup, so enabled rules do not resume after a restart until toggled.
 - Movement detection sees motion only. It does not identify people or vehicles.
 - The forecast cannot predict one-off events with no pattern, and no model foresees a surge far larger than anything in the history.
+<<<<<<< Updated upstream
 - The box connection uses `verify=False` (self-signed certificate). Use it only on a trusted network.
+=======
+- The box connection uses `verify=False` (self-signed certificate). Use it only on a trusted network.
+
+>>>>>>> Stashed changes
