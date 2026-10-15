@@ -1,4 +1,3 @@
-<<<<<<< Updated upstream
 # B4H portal: workflow and API flow
 
 Django admin portal that reads everything live from the MegCube B4H box. Arrows show who calls whom; each table lists parameters in and data out.
@@ -112,11 +111,19 @@ Create a `.env` file in the project root:
 | `LIVE_SUBSTREAM` | `0` | `1` = use RTSP sub stream (`/channels/NN02`) |
 | `B4H_LOG_BODY` | built in | JSON body for the box log query |
 | `B4H_LOG_PATH` / `B4H_LOG_FILE_PATH` | `/device_maintenance/log` / `/device_maintenance/logFile` | Log endpoints |
+| `LIVE_OPEN_TIMEOUT_MS` / `LIVE_READ_TIMEOUT_MS` | `8000` / `8000` | A dead camera fails after this long instead of hanging a thread |
+| `LIVE_FIRST_FRAME_WAIT` | `25` | Seconds a browser tile waits for the first frame (big keyframe intervals are slow) |
+| `LIVE_MAX_STREAMS` | `12` | Max simultaneous live tiles. Each holds a server thread; keep it at least 8 below the server's `--threads` |
+| `FORECAST_AGENT` | `1` | `0` turns the next-hour forecast agent off |
+| `FORECAST_BACKFILL_DAYS` | `28` | History pulled from the box on the agent's first run |
+| `FORECAST_MIN_TRAIN_ROWS` | `200` | Below this many training hours only the seasonal average is used |
+| `FORECAST_RUN_MINUTE` | `2` | The agent runs this many minutes after each full hour |
+| `FORECAST_Z` / `FORECAST_RATIO` / `FORECAST_MIN_DELTA` | `2.0` / `1.5` / `5` | "Investigate" thresholds (see Event forecast agent) |
 | `B4H_ALG_PATH` / `B4H_ALG_BODY` | `/intelli_manager/alg_warehouse/packet_list` / `{"offset":0,"size":100}` | Algorithm list |
 
 No box available? Run the fake box: `python mock_box.py`, then start the server with `B4H_BASE_URL=http://127.0.0.1:9001`.
 
-Production (Windows, single process with threads): `waitress-serve --threads=4 config.wsgi:application`. Run one process only, because camera streams and alarm workers live in process memory.
+Production (Windows, single process with threads): `waitress-serve --threads=32 config.wsgi:application`. Run one process only, because camera streams and alarm workers live in process memory.
 
 ## Project layout
 
@@ -131,6 +138,8 @@ Production (Windows, single process with threads): `waitress-serve --threads=4 c
 | `boxapp/views.py` | Image proxy, live video, log download, movement alarm routes |
 | `boxapp/streams.py` | RTSP to MJPEG (OpenCV, one thread per camera) |
 | `boxapp/movement_alarm.py` | Motion detection workers |
+| `boxapp/forecast.py` | Next-hour event forecast: collector, models, background agent |
+| `boxapp/management/commands/check_live.py` | `manage.py check_live`: finds why a camera does not play |
 | `boxapp/models.py` | Page permission models and alarm rule/event tables |
 | `mock_box.py` | Fake box for offline development |
 
@@ -198,6 +207,10 @@ All routes require staff login.
 | `/admin/box-image/` | GET | `uri` | Image bytes (cached 1 day) |
 | `/admin/live/<id>/stream/` | GET | `device_id` | MJPEG (`multipart/x-mixed-replace`) |
 | `/admin/live/<id>/snapshot/` | GET | `device_id` | One JPEG, 504 if no frame |
+| `/admin/live/<id>/status/` | GET | `device_id` | JSON `{state, error, frame_age_s, size}`: why a tile is blank |
+| `/admin/boxapp/eventforecastpage/` | GET | none | HTML: next-hour forecast per camera, flagged hours, forecast vs actual |
+| `/admin/forecast/run/` | POST | none | Starts one agent cycle now, redirects back |
+| `/admin/forecast/data/` | GET | none | JSON of the latest forecasts |
 | `/admin/box-log/download/` | GET | none | Log file attachment |
 | `/admin/movement-alarm/` | GET | none | HTML: rules, last 100 events |
 | `/admin/movement-alarm/create/` | POST | JSON below, header `X-CSRFToken` | `{ok, id}` or 400 `{error}` |
@@ -245,13 +258,115 @@ Notes on `alarm_history`:
 - Captures use `face_capture` and/or `body_capture`, plus a second entry `{major_type: "structure", minor_type: ["face", "pedestrian", "vehicle", "non_motor", "plate"]}`. Without it the box returns code 1073741831 (`not_support`).
 - Log times are in seconds.
 
+## Live video: when a camera does not play
+
+Run the diagnostic on the PC that runs the portal. It tests, in order, the box login, the RTSP URL the box
+holds, the camera's TCP port, the RTSP open, the first frame and the frame rate, and names the first stage that fails:
+
+```bash
+python manage.py check_live          # every camera
+python manage.py check_live 1 --substream
+```
+
+| Symptom | Cause |
+|---|---|
+| `cannot reach host:554 ... timed out` | The packets are dropped, not refused: the PC is not on the camera network (Wi-Fi, VPN, VLAN), the NVR is off or has a new DHCP address, or a firewall blocks port 554 |
+| Log: `Stream timeout triggered after 8000 ms` | Same as above, seen from the live view: the camera did not answer within `LIVE_OPEN_TIMEOUT_MS` |
+| `RTSP open failed` | Wrong camera user/password, wrong stream path, or the camera ran out of RTSP sessions (close other viewers) |
+| `opened but no decodable frames` | H.265 / H.264+ stream. Set the sub stream to H.264 and use `LIVE_SUBSTREAM=1` |
+| `first frame is slow` | Long keyframe interval on the main stream: use `LIVE_SUBSTREAM=1` |
+| Whole portal freezes while video plays | All server threads are busy streaming. Run `waitress-serve --threads=32` (see `LIVE_MAX_STREAMS`) |
+| `several OpenCV packages are installed` | `opencv-python` and `-headless` overwrite each other: keep only `opencv-python-headless` |
+
+Several cameras listed by the box can share one IP (for example one Hikvision NVR at `x.x.x.24` with channels
+201, 301, 401). If `check_live` fails for all of them with the same host, it is one network or NVR problem, not three.
+
+How to narrow down a timeout, on the portal PC (PowerShell):
+
+```powershell
+ipconfig                                    # is the IPv4 address in the camera subnet?
+ping <camera-or-nvr-ip>                     # does it answer at all?
+Test-NetConnection <camera-or-nvr-ip> -Port 554
+```
+
+When port 554 connects, open `rtsp://USER:PASSWORD@IP:554/ISAPI/Streaming/channels/201` in VLC on the same PC. If VLC plays, the portal will too.
+
+Each live tile also shows its own status line, reconnects on its own, and a camera password containing
+`@ : / #` is percent-encoded automatically. If the box keeps user and password in separate fields they are added to the URL.
+
+## Event forecast agent (next-hour event count)
+
+The page **Event forecast** predicts, for every camera and event type, how many events to expect in the hour
+that is just starting (`next_hour_event_count`) and tells an operator when that is far above normal.
+A full description (variables, formulas, worked examples) is in the document *Next-Hour Event Forecast:
+Variables, Models and Calculation*.
+
+### Events and series
+
+| `event_type` | Meaning | Source |
+|---|---|---|
+| `face_comparison_successful` | Face matched a person in the library | Box `alarm_history` |
+| `stranger` | Face detected, matched nobody | Box `alarm_history` |
+| `face_capture` | A face was captured | Box `alarm_history` |
+| `body_capture` | A person (body) was captured | Box `alarm_history` |
+| `movement` | Restricted-zone movement alarm | Portal database |
+
+Each event type on each camera is one **series** (for example "Camera 1 + Body capture"). Hours with no event count as 0.
+
+### Variables
+
+One training row is one past hour, using only what was known at the start of that hour:
+
+| Input | Meaning | Example |
+|---|---|---|
+| `hour` | Hour of day (portal time zone) | 14 |
+| `day_of_week` | Monday=0 ... Sunday=6 | 2 (Wednesday) |
+| `previous_hour_event_count` | Events in the hour before | 8 |
+| `previous_day_event_count` | Events in the same hour yesterday | 10 |
+| `event_type` | One of the types above | face recognition |
+| `device_id` | Camera | 1 |
+
+**Output / target:** `next_hour_event_count`, the number of events in the hour that starts when the agent runs
+(at 14:02 it covers 14:00-15:00). It is never invented: it is counted from the box's timestamped records and from
+the portal's own movement alarms. Only completed hours are counted.
+
+### What the agent does every hour (about 2 minutes after the full hour)
+
+The agent is a thread in the server process, started by `config/wsgi.py`.
+
+1. **Collects** new completed hours into `HourlyEventCount` (30 records per request, one-day windows). The first run backfills `FORECAST_BACKFILL_DAYS`. Whole hours are replaced, so running twice never double counts.
+2. **Trains and chooses.** Three methods compete:
+   - *Seasonal average*: mean for the same camera, type, weekday and hour (falls back to same hour of day, then overall, when fewer than 3 samples). Also defines "normal".
+   - *`gbm`*: Poisson gradient boosting (scikit-learn `HistGradientBoostingRegressor`), forced to never decrease when the previous hour or day goes up.
+   - *`glm`*: Poisson log-linear model (`PoissonRegressor`): `log(expected) = b0 + series + series x hour + weekday + w1 ln(1 + previous_hour) + w2 ln(1 + previous_day)`.
+
+   The most recent hours (the larger of 48 hours or 20 percent of the history) are held out. Each method predicts them without seeing them, and its score is the mean absolute error `average(|predicted - actual|)`; lowest wins. A model is only used if it beats the seasonal average. Under `FORECAST_MIN_TRAIN_ROWS` training hours, with too little recent data to validate, or if scikit-learn is missing, the seasonal average is the forecast and the page says why.
+3. **Predicts** every series that has at least 24 hours of history and an event in the last 14 days, and stores the forecast, method and a recommendation.
+4. **Fills in Actual.** After the hour ends, the real count is stored next to the forecast.
+
+### Reading the page
+
+| Column / block | Meaning |
+|---|---|
+| Expected events | The forecast for the hour that is starting |
+| Normal | Average for that camera, type and hour of the week |
+| x normal | Expected divided by normal |
+| Status | **Investigate** when all three hold: expected >= normal + `FORECAST_Z` x spread, expected >= `FORECAST_RATIO` x normal, and expected - normal >= `FORECAST_MIN_DELTA`. Otherwise **Normal** |
+| Actual (past forecasts) | Events that really happened in that hour. Empty until the hour is over. `0` means no events were stored: nothing happened, or the box reported nothing. Only filled when the whole run had no errors, so a box outage does not produce false zeros |
+| Cameras without a forecast | Cameras the box lists that are not forecast, with the reason: no events recorded yet, or no event in the last 14 days / less than a day of history |
+
+Predicted far above Actual (for example 18 expected, 0 happened) is worth a look: the camera or NVR may be offline.
+The page does not flag "much lower than normal" yet.
+
+Run the first cycle with **Run now**. Quality depends on history: ideally two or more weeks of events per camera;
+with a few days the plain average usually wins. Setup: `pip install -r requirements.txt` (adds scikit-learn) and
+`python manage.py migrate`. The chosen model is also written to `forecast_model.pkl` (ignored by git).
+
 ## Known limits
 
-- Run a single server process. Streams and alarm workers are in-memory.
+- Run a single server process. Streams, alarm workers and the forecast agent are in-memory.
+- Every open live tile occupies a server thread: start production with `waitress-serve --threads=32 config.wsgi:application`.
 - Alarm workers are started when a rule is created or toggled. `MovementAlarmManager.sync()` exists but is not called at startup, so enabled rules do not resume after a restart until toggled.
 - Movement detection sees motion only. It does not identify people or vehicles.
+- The forecast cannot predict one-off events with no pattern, and no model foresees a surge far larger than anything in the history.
 - The box connection uses `verify=False` (self-signed certificate). Use it only on a trusted network.
-
-=======
-##Test
->>>>>>> Stashed changes

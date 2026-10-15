@@ -2,6 +2,7 @@
 import logging
 import re
 from datetime import datetime
+from urllib.parse import quote
 
 import httpx
 from django.conf import settings
@@ -169,20 +170,66 @@ def to_substream(url: str) -> str:
     return re.sub(r"(?i)(/channels/\d+)01$", r"\g<1>02", url)
 
 
+def _with_credentials(url: str, rtsp_param: dict) -> str:
+    """
+    Make sure the RTSP URL carries usable credentials.
+
+    * The box may keep user/password in separate fields and leave them out of `url` -> add them.
+    * A password containing '@', ':', '/' or '#' written raw in the URL breaks parsing -> percent-encode it.
+      The host starts after the LAST '@' (camera paths never contain one), so everything before it is userinfo.
+    """
+    m = re.match(r"(?i)^(rtsps?://)(.*)$", url)
+    if not m:
+        return url                                       # a file path or other source: leave untouched
+    scheme, rest = m.groups()
+    at = rest.rfind("@")
+    if at >= 0:
+        userinfo, tail = rest[:at], rest[at + 1:]
+        if "%" in userinfo:                              # already encoded
+            return url
+        user, _, pwd = userinfo.partition(":")
+    else:
+        user, pwd, tail = rtsp_param.get("user"), rtsp_param.get("password"), rest
+        if not user:
+            return url
+    cred = quote(str(user), safe="")
+    if pwd is not None and str(pwd) != "":
+        cred += ":" + quote(str(pwd), safe="")
+    return f"{scheme}{cred}@{tail}"
+
+
+def mask_url(url: str) -> str:
+    """rtsp://user:pass@host:554/path -> rtsp://***@host:554/path (safe for logs and error messages)."""
+    m = re.match(r"(?i)^([a-z][a-z0-9+.-]*://)(.*)$", url)
+    if not m:
+        return url
+    scheme, rest = m.groups()
+    at = rest.rfind("@")
+    return f"{scheme}***@{rest[at + 1:]}" if at >= 0 else url
+
+
 def _rtsp_urls() -> dict[int, str]:
     data = box.call("POST", "/device_access/device_config", {"offset": 0, "size": 100})
     items = data if isinstance(data, list) else mapping.find_list(data)
     out: dict[int, str] = {}
     for d in items or []:
-        url = (d.get("rtsp_param") or {}).get("url")
+        param = d.get("rtsp_param") or {}
+        url = param.get("url")
         if url and d.get("device_id") is not None:
-            out[int(d["device_id"])] = url
+            out[int(d["device_id"])] = _with_credentials(url, param)
     return out
 
 
 def _cached_rtsp_urls() -> dict[int, str]:
     # In-process cache only (LocMem). These URLs contain the camera password.
-    return cache.get_or_set("box_rtsp_urls", _rtsp_urls, 300)
+    # An empty answer is never cached: the box sometimes returns an empty list right after a restart,
+    # and caching that would show "no RTSP URL" for 5 minutes.
+    urls = cache.get("box_rtsp_urls")
+    if urls is None:
+        urls = _rtsp_urls()
+        if urls:
+            cache.set("box_rtsp_urls", urls, 300)
+    return urls
 
 
 def camera_ids() -> set[int]:

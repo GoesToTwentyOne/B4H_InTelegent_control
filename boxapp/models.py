@@ -47,6 +47,13 @@ class LogView(_BoxPage):
         verbose_name = "log"
         verbose_name_plural = "Logs"
 
+class EventForecastPage(_BoxPage):
+    """Sidebar entry + permission for the next-hour event forecast page."""
+    class Meta(_BoxPage.Meta):
+        verbose_name = "event forecast"
+        verbose_name_plural = "Event forecast"
+
+
 class AlgorithmPackage(_BoxPage):
     class Meta(_BoxPage.Meta):
         verbose_name = "algorithm package"
@@ -144,3 +151,68 @@ class MovementAlarmEvent(models.Model):
         return f"{self.rule.name} @ {self.detected_at:%Y-%m-%d %H:%M:%S}"
 
 
+
+
+# ----------------------------------------------------------------------------------------------
+# Next-hour event forecast (see boxapp/forecast.py)
+# ----------------------------------------------------------------------------------------------
+
+class HourlyEventCount(models.Model):
+    """
+    How many events of one type one camera produced in one clock hour. Zero-event hours are NOT stored
+    (the forecast code fills them in), so a missing row means "0 events".
+    """
+
+    device_id = models.IntegerField()
+    event_type = models.CharField(max_length=40)      # face_comparison_successful, stranger, face_capture, body_capture, movement
+    hour_start = models.DateTimeField()               # start of the clock hour
+    count = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["device_id", "event_type", "hour_start"], name="uniq_hourly_series_hour"),
+        ]
+        indexes = [models.Index(fields=["event_type", "hour_start"])]
+
+    def __str__(self):
+        return f"{self.event_type} cam {self.device_id} {self.hour_start:%Y-%m-%d %H:00} = {self.count}"
+
+
+class EventForecast(models.Model):
+    """The agent's prediction of next_hour_event_count for one camera + event type."""
+
+    STATUS_NORMAL, STATUS_INVESTIGATE = "normal", "investigate"
+
+    created_at = models.DateTimeField(auto_now=True)
+    target_hour = models.DateTimeField()              # the hour being predicted (start)
+    device_id = models.IntegerField()
+    event_type = models.CharField(max_length=40)
+    predicted = models.FloatField()                   # expected events in the target hour
+    normal = models.FloatField()                      # typical count for that hour of the week
+    normal_sd = models.FloatField(default=1.0)
+    ratio = models.FloatField(default=1.0)            # predicted / normal
+    status = models.CharField(max_length=16, default=STATUS_NORMAL)
+    model_used = models.CharField(max_length=16, default="baseline")   # "model" or "baseline"
+    recommendation = models.TextField(blank=True)
+    actual = models.PositiveIntegerField(null=True, blank=True)        # filled in once the hour is over
+
+    class Meta:
+        ordering = ["-target_hour", "device_id", "event_type"]
+        constraints = [
+            models.UniqueConstraint(fields=["target_hour", "device_id", "event_type"], name="uniq_forecast_per_hour_series"),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} cam {self.device_id} {self.target_hour:%Y-%m-%d %H:00}: {self.predicted:.1f}"
+
+
+class ForecastState(models.Model):
+    """Small key/value table for the agent: per-source sync progress, model metrics, last run summary."""
+
+    key = models.CharField(max_length=60, unique=True)
+    synced_until = models.DateTimeField(null=True, blank=True)
+    data = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.key

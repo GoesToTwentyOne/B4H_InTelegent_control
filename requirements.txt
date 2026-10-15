@@ -2,6 +2,7 @@ Django>=5.2,<6.1
 httpx>=0.28.1
 opencv-python-headless>=4.9   # live video
 python-dotenv>=1.0
+scikit-learn>=1.4   # event forecast agent (also installs numpy, joblib)
 whitenoise>=6.7   # production only (DJANGO_DEBUG=0)
-# Windows production server (single process, threads): waitress-serve --threads=4 config.wsgi:application
+# Windows production server (single process, threads): waitress-serve --threads=32 config.wsgi:application
 waitress>=3.0

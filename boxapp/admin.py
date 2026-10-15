@@ -6,13 +6,14 @@ import logging
 
 import httpx
 from django.contrib import admin
+from django.utils import timezone
 from django.core.exceptions import PermissionDenied
 from django.template.response import TemplateResponse
 
 from . import services
 from .b4h import B4HError
 from .forms import CaptureFilterForm, LogFilterForm, RecognitionFilterForm
-from .models import AlgorithmPackage, CaptureRecord, Device, LiveView, LogView, Person, RecognitionRecord
+from .models import AlgorithmPackage, CaptureRecord, Device, EventForecastPage, LiveView, LogView, Person, RecognitionRecord
 
 log = logging.getLogger("b4h")
 
@@ -141,6 +142,52 @@ class LiveAdmin(BoxPageAdmin):
         except ValueError:
             cols = 2
         return {"cameras": cameras, "cols": cols}
+
+
+@admin.register(EventForecastPage)
+class EventForecastAdmin(BoxPageAdmin):
+    """Reads the portal's own database (filled by the forecast agent), not the box."""
+    page_template = "admin/boxapp/forecast.html"
+
+    def build_context(self, request):
+        from . import forecast
+        from .models import EventForecast, ForecastState, HourlyEventCount
+
+        names = services.device_names()
+        latest = EventForecast.objects.order_by("-target_hour").values_list("target_hour", flat=True).first()
+        current = list(EventForecast.objects.filter(target_hour=latest)) if latest else []
+        current.sort(key=lambda f: (f.status != f.STATUS_INVESTIGATE, -f.ratio, f.device_id))
+        recent = list(EventForecast.objects.filter(actual__isnull=False).order_by("-target_hour", "device_id")[:30])
+
+        def row(f):
+            return {"f": f, "device": names.get(str(f.device_id), f"Camera {f.device_id}"), "label": forecast.label(f.event_type)}
+
+        # Cameras the box lists but that have no forecast: say why instead of silently leaving them out.
+        with_forecast = {f.device_id for f in current}
+        without = []
+        for dev_id, dev_name in sorted(names.items(), key=lambda kv: int(kv[0])):
+            if int(dev_id) in with_forecast:
+                continue
+            last = HourlyEventCount.objects.filter(device_id=int(dev_id)).order_by("-hour_start").first()
+            if last is None:
+                reason = "No events recorded for this camera yet, so there is nothing to forecast."
+            else:
+                reason = (f"Last event in {timezone.localtime(last.hour_start):%Y-%m-%d %H:00}. A camera is forecast only if it "
+                          f"had an event in the last {forecast.ACTIVE_WITHIN_DAYS} days and has at least a day of history.")
+            without.append({"id": dev_id, "name": dev_name, "reason": reason})
+
+        agent = ForecastState.objects.filter(key="agent").first()
+        return {
+            "without_forecast": without if latest else [],
+            "latest_hour": latest,
+            "forecasts": [row(f) for f in current],
+            "recent": [row(f) for f in recent],
+            "flagged": sum(f.status == f.STATUS_INVESTIGATE for f in current),
+            "agent": agent.data if agent else None,
+            "agent_updated": agent.updated_at if agent else None,
+            "running": forecast.ForecastAgent.running,
+            "history_rows": HourlyEventCount.objects.count(),
+        }
 
 
 @admin.register(LogView)
