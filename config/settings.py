@@ -8,6 +8,10 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+# RTSP over TCP is far more reliable than UDP. Set here (before anything imports cv2) so the live view,
+# the movement alarm workers and `manage.py check_live` all behave the same, whatever the import order.
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-insecure-key-change-me")
 DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if h.strip()]
@@ -107,3 +111,24 @@ B4H_LOG_FILE_PATH = os.getenv("B4H_LOG_FILE_PATH", "/device_maintenance/logFile"
 # log body (B4H_ALG_BODY in .env) in case the box rejects it with invalid_param.
 B4H_ALG_PATH = os.getenv("B4H_ALG_PATH", "/intelli_manager/alg_warehouse/packet_list")
 B4H_ALG_BODY = json.loads(os.getenv("B4H_ALG_BODY") or json.dumps({"offset": 0, "size": 100}))
+
+# --- Live video timeouts (milliseconds / seconds). A camera that is unreachable or silent must fail fast
+# instead of blocking a worker thread for OpenCV's default ~30 s.
+LIVE_OPEN_TIMEOUT_MS = int(os.getenv("LIVE_OPEN_TIMEOUT_MS", "8000"))
+LIVE_READ_TIMEOUT_MS = int(os.getenv("LIVE_READ_TIMEOUT_MS", "8000"))
+LIVE_FIRST_FRAME_WAIT = int(os.getenv("LIVE_FIRST_FRAME_WAIT", "25"))   # a browser waits this long for the 1st frame
+# Every open camera tile holds one server thread for as long as it streams. If they all do, the whole portal
+# (even the login page) stops answering. Cap the streams so that cannot happen: keep this at least 8 below the
+# server's thread count (waitress-serve --threads=32 with the default of 12 leaves plenty of room).
+LIVE_MAX_STREAMS = int(os.getenv("LIVE_MAX_STREAMS", "12"))
+
+# --- Event forecast agent (next-hour event count). See boxapp/forecast.py.
+FORECAST_AGENT = os.getenv("FORECAST_AGENT", "1") == "1"            # start the background agent with the server
+FORECAST_BACKFILL_DAYS = int(os.getenv("FORECAST_BACKFILL_DAYS", "28"))  # history pulled from the box on first run
+FORECAST_MIN_TRAIN_ROWS = int(os.getenv("FORECAST_MIN_TRAIN_ROWS", "200"))
+FORECAST_RUN_MINUTE = int(os.getenv("FORECAST_RUN_MINUTE", "2"))    # run this many minutes after each full hour
+# "Investigate" when predicted >= normal + Z*sd AND >= normal*RATIO AND >= normal + MIN_DELTA.
+FORECAST_Z = float(os.getenv("FORECAST_Z", "2.0"))
+FORECAST_RATIO = float(os.getenv("FORECAST_RATIO", "1.5"))
+FORECAST_MIN_DELTA = float(os.getenv("FORECAST_MIN_DELTA", "5"))
+FORECAST_MODEL_PATH = BASE_DIR / "forecast_model.joblib"

@@ -37,18 +37,27 @@ class B4HClient:
         self._login_lock = threading.Lock()
         self._call_lock = threading.Lock()
 
+    @staticmethod
+    def _json(r: httpx.Response, path: str) -> dict:
+        """Parse a login reply; a non-JSON answer means B4H_BASE_URL points at something that is not the box."""
+        try:
+            return r.json()
+        except ValueError:
+            raise B4HError(r.status_code, f"non-JSON reply (HTTP {r.status_code}); check B4H_BASE_URL", path)
+
     def login(self) -> None:
         with self._login_lock:
-            body = self._http.get("/auth/login/challenge", params={"username": self.username}).json()
+            body = self._json(self._http.get("/auth/login/challenge", params={"username": self.username}),
+                              "/auth/login/challenge")
             if body.get("code") != 0:
                 raise B4HError(body.get("code"), body.get("message"), "/auth/login/challenge")
             d = body["data"]
             pwd_hash = hashlib.sha256((self.password + d["salt"] + d["challenge"]).encode()).hexdigest()
-            body = self._http.post(
+            body = self._json(self._http.post(
                 "/auth/login",
                 json={"session_id": d["session_id"], "username": self.username, "password": pwd_hash},
                 headers={"Cookie": f"sessionID={d['session_id']}"},
-            ).json()
+            ), "/auth/login")
             if body.get("code") != 0:
                 # careful: 5 wrong passwords in a row locks the account on the box
                 raise B4HError(body.get("code"), body.get("message"), "/auth/login")

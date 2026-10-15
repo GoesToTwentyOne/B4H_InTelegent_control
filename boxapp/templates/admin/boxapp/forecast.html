@@ -1,0 +1,79 @@
+{% extends "admin/boxapp/base_box.html" %}
+{% block box_content %}
+<style>
+  .fc-flag { background:#c0392b; color:#fff; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .fc-ok { background:#2e8b57; color:#fff; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .fc-card { margin:0 0 16px; padding:12px 14px; border:1px solid var(--hairline-color, #ddd); border-radius:6px; }
+  .fc-hot td { background: color-mix(in srgb, #c0392b 12%, transparent); }
+  .fc-note { font-size:12px; }
+</style>
+
+<div class="fc-card">
+  <form method="post" action="{% url 'forecast_run' %}" style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
+    {% csrf_token %}
+    <div>
+      <strong>Next-hour event forecast</strong>
+      <div class="box-muted fc-note">
+        An agent counts events per hour from the box's timestamped history, learns the pattern, and predicts how many
+        events each camera will produce in the coming hour. A prediction far above normal is flagged for an operator.
+      </div>
+    </div>
+    <input type="submit" class="default" value="{% if running %}Running…{% else %}Run now{% endif %}" {% if running %}disabled{% endif %}>
+  </form>
+  {% if agent %}
+  <div class="box-muted fc-note" style="margin-top:8px;">
+    Last run {{ agent_updated|date:"Y-m-d H:i" }} &middot; {{ agent.series|default:0 }} camera/event series &middot;
+    {{ history_rows }} hourly counts stored
+    {% if agent.model %}&middot; forecast method: <strong>{{ agent.model.used|default:"baseline" }}</strong>
+      {% if agent.model.mae_model is not None %}(average error on unseen hours: {{ agent.model.mae_model }} events vs {{ agent.model.mae_baseline }} for the plain average){% endif %}
+      <br>{{ agent.model.note }}{% endif %}
+    {% if agent.note %}<br>{{ agent.note }}{% endif %}
+    {% for e in agent.errors %}<br><span style="color:#c0392b">Problem: {{ e }}</span>{% endfor %}
+  </div>
+  {% else %}
+  <div class="box-muted fc-note" style="margin-top:8px;">The agent has not run yet. Click "Run now": the first run pulls the box's recent history, which can take a few minutes.</div>
+  {% endif %}
+</div>
+
+{% if latest_hour %}
+<h2>Expected {{ latest_hour|date:"H:00" }}&ndash;{{ latest_hour|date:"H:59" }} ({{ latest_hour|date:"Y-m-d" }})
+  {% if flagged %}<span class="fc-flag">{{ flagged }} to investigate</span>{% endif %}</h2>
+<table class="box-table">
+  <thead><tr><th>Camera</th><th>Event type</th><th>Expected events</th><th>Normal</th><th>&times; normal</th><th>Status</th><th>Recommendation</th></tr></thead>
+  <tbody>
+  {% for r in forecasts %}
+    <tr {% if r.f.status == "investigate" %}class="fc-hot"{% endif %}>
+      <td>{{ r.device }} <span class="box-muted">#{{ r.f.device_id }}</span></td>
+      <td>{{ r.label }}</td>
+      <td><strong>{{ r.f.predicted|floatformat:1 }}</strong></td>
+      <td>{{ r.f.normal|floatformat:1 }}</td>
+      <td>{{ r.f.ratio|floatformat:1 }}</td>
+      <td>{% if r.f.status == "investigate" %}<span class="fc-flag">Investigate</span>{% else %}<span class="fc-ok">Normal</span>{% endif %}</td>
+      <td class="fc-note">{{ r.f.recommendation }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="box-empty box-muted">
+  No forecast yet. The agent needs historical events with timestamps from the box (at least a day per camera, ideally
+  two or more weeks) to count how many happen in each hour.
+</p>
+{% endif %}
+
+{% if recent %}
+<h3 style="margin-top:22px;">Past forecasts vs what happened</h3>
+<table class="box-table">
+  <thead><tr><th>Hour</th><th>Camera</th><th>Event type</th><th>Predicted</th><th>Actual</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for r in recent %}
+    <tr>
+      <td>{{ r.f.target_hour|date:"Y-m-d H:00" }}</td><td>{{ r.device }}</td><td>{{ r.label }}</td>
+      <td>{{ r.f.predicted|floatformat:1 }}</td><td>{{ r.f.actual }}</td>
+      <td>{% if r.f.status == "investigate" %}<span class="fc-flag">Investigate</span>{% else %}<span class="fc-ok">Normal</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

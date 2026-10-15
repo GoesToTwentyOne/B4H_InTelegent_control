@@ -6,6 +6,8 @@
   .live-card header { background:var(--darkened-bg, #f4f4f4); color:var(--body-fg); padding:6px 10px; font-weight:600; font-size:13px; }
   .live-card img { display:block; width:100%; aspect-ratio:16/9; object-fit:contain; background:#111; }
   .live-off { padding:40px 10px; text-align:center; color:#aaa; font-size:13px; }
+  .live-note { padding:5px 10px; font-size:12px; color:#ddd; background:#222; min-height:18px; }
+  .live-note.bad { color:#ffb4a8; }
 </style>
 <form method="get" class="box-filter">
   <div><label for="cols">Columns</label>
@@ -16,9 +18,38 @@
 {% for c in cameras %}
   <div class="live-card">
     <header>{{ c.name|default:"Camera" }} <span class="box-muted">#{{ c.id }}</span></header>
-    {% if c.configured %}<img src="{% url 'live_stream' c.id %}" alt="{{ c.name }}">
+    {% if c.configured %}<img class="live-img" data-id="{{ c.id }}" data-src="{% url 'live_stream' c.id %}" alt="{{ c.name }}">
+    <div class="live-note" id="note-{{ c.id }}">Connecting…</div>
     {% else %}<div class="live-off">The box has no RTSP URL for this device</div>{% endif %}
   </div>
 {% empty %}<p class="box-muted">No devices found on the box.</p>{% endfor %}
 </div>
+<script>
+// An <img> MJPEG stream goes blank if the connection drops or the first frame is slow.
+// Reconnect automatically, and ask the server why a camera is silent.
+(function () {
+  var statusUrl = "{% url 'live_status' 0 %}";
+  function connect(img) { img.src = img.dataset.src + "?t=" + Date.now(); }
+  document.querySelectorAll(".live-img").forEach(function (img) {
+    connect(img);
+    img.addEventListener("error", function () { setTimeout(function () { connect(img); }, 3000); });
+  });
+  function poll() {
+    document.querySelectorAll(".live-img").forEach(function (img) {
+      var note = document.getElementById("note-" + img.dataset.id);
+      fetch(statusUrl.replace("/0/", "/" + img.dataset.id + "/"), {credentials: "same-origin"})
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d || !note) return;
+          var live = d.state === "live" && d.frame_age_s !== null && d.frame_age_s < 5;
+          note.className = "live-note" + (live ? "" : " bad");
+          note.textContent = live ? "Live " + d.size : (d.error || "Connecting…");
+          // the server ended a stalled stream: reconnect (also restarts the camera thread)
+          if (d.state === "idle" || (d.state === "reconnecting" && !img.naturalWidth)) connect(img);
+        }).catch(function () {});
+    });
+  }
+  setInterval(poll, 6000); setTimeout(poll, 2000);
+})();
+</script>
 {% endblock %}
